@@ -5,6 +5,7 @@ export type CodexPlanType =
   | "go"
   | "plus"
   | "pro"
+  | "prolite"
   | "team"
   | "business"
   | "enterprise"
@@ -19,7 +20,7 @@ export interface CodexAccountSnapshot {
 
 export const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
-const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
+const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro", "prolite"]);
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {

@@ -10,15 +10,26 @@ import { buildInitialPiProviderSnapshot, checkPiProviderStatus } from "./PiProvi
 
 const decodePiSettings = Schema.decodeSync(PiSettings);
 
-// fake `pi`: `--version` exits 0; anything else returns empty get_available_models
-const HEALTHY_PI_SCRIPT = [
-  "#!/bin/sh",
-  'case "$1" in',
-  '  --version) printf "pi 0.80.2\\n"; exit 0 ;;',
-  '  *) printf \'{"type":"response","command":"get_available_models","id":"pi-model-discovery","success":true,"data":{"models":[]}}\\n\'; exit 0 ;;',
-  "esac",
-  "",
-].join("\n");
+// fake `pi`: `--version` exits 0; for RPC, wait for a stdin request then reply with models.
+// Responding only after a request avoids racing the transport's pending-request registration.
+const healthyPiScript = (modelsJson: string) =>
+  [
+    "#!/bin/sh",
+    'if [ "$1" = "--version" ]; then',
+    '  printf "pi 0.80.2\\n"',
+    "  exit 0",
+    "fi",
+    "while IFS= read -r line; do",
+    '  id=$(printf "%s" "$line" | sed -n \'s/.*"id":"\\([^"]*\\)".*/\\1/p\')',
+    '  [ -z "$id" ] && id="pi-model-discovery"',
+    `  printf '{"type":"response","command":"get_available_models","id":"%s","success":true,"data":{"models":${modelsJson}}}\\n' "$id"`,
+    "  exit 0",
+    "done",
+    "",
+  ].join("\n");
+
+const HEALTHY_PI_SCRIPT_NO_MODELS = healthyPiScript("[]");
+const HEALTHY_PI_SCRIPT_WITH_MODELS = healthyPiScript('[{"provider":"openai","id":"gpt-4o"}]');
 
 describe("buildInitialPiProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -109,7 +120,7 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports ready/authenticated when models are available", () =>
+  it.effect("reports ready/authenticated when discovered models are available", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -117,7 +128,29 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-ready-" });
           const piPath = path.join(dir, "pi");
-          yield* fs.writeFileString(piPath, HEALTHY_PI_SCRIPT);
+          yield* fs.writeFileString(piPath, HEALTHY_PI_SCRIPT_WITH_MODELS);
+          yield* fs.chmod(piPath, 0o755);
+          return yield* checkPiProviderStatus(
+            decodePiSettings({ enabled: true, binaryPath: piPath }),
+            dir,
+          );
+        }),
+      );
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.models.map((model) => model.slug)).toContain("openai/gpt-4o");
+    }),
+  );
+
+  it.effect("does not treat custom-only models as authenticated", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-custom-only-" });
+          const piPath = path.join(dir, "pi");
+          yield* fs.writeFileString(piPath, HEALTHY_PI_SCRIPT_NO_MODELS);
           yield* fs.chmod(piPath, 0o755);
           return yield* checkPiProviderStatus(
             decodePiSettings({ enabled: true, binaryPath: piPath, customModels: ["x/y"] }),
@@ -125,8 +158,9 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
           );
         }),
       );
-      expect(snapshot.status).toBe("ready");
-      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.auth.status).toBe("unknown");
+      expect(snapshot.models.map((model) => model.slug)).toContain("x/y");
     }),
   );
 
@@ -138,7 +172,7 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-nomodels-" });
           const piPath = path.join(dir, "pi");
-          yield* fs.writeFileString(piPath, HEALTHY_PI_SCRIPT);
+          yield* fs.writeFileString(piPath, HEALTHY_PI_SCRIPT_NO_MODELS);
           yield* fs.chmod(piPath, 0o755);
           return yield* checkPiProviderStatus(
             decodePiSettings({ enabled: true, binaryPath: piPath }),

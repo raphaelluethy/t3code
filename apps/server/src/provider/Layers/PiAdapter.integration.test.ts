@@ -61,7 +61,10 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
       id: "x",
       command: "get_state",
       success: true,
-      data: { sessionFile: "/tmp/pi-session.json" },
+      data: {
+        sessionFile: "/tmp/pi-session.json",
+        model: { provider: "openai", id: "gpt-4o" },
+      },
     }),
   );
   responses.set(
@@ -150,6 +153,7 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       expect(session.provider).toBe("pi");
       expect(session.status).toBe("ready");
       expect(session.resumeCursor).toEqual({ sessionFile: "/tmp/pi-session.json" });
+      expect(session.model).toBe("openai/gpt-4o");
 
       const turn = yield* adapter.sendTurn({ threadId, input: "hello", attachments: [] });
       expect(turn.turnId).toBeDefined();
@@ -169,6 +173,12 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       const types = events.map((event) => event.type);
       expect(types).toContain("session.started");
       expect(types).toContain("turn.started");
+
+      const turnStarted = events.find((event) => event.type === "turn.started");
+      expect(turnStarted).toBeDefined();
+      if (turnStarted && turnStarted.type === "turn.started") {
+        expect(turnStarted.payload).toEqual({ model: "openai/gpt-4o" });
+      }
 
       const delta = events.find((event) => event.type === "content.delta");
       expect(delta).toBeDefined();
@@ -346,7 +356,7 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
         type: "extension_ui_request",
         id: "ui-1",
         method: "confirm",
-        title: "bash",
+        title: "Run bash?",
         message: "ls -la",
       } as RpcExtensionUIRequest);
 
@@ -360,6 +370,7 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       expect(requestOpened).toBeDefined();
       if (requestOpened && requestOpened.type === "request.opened") {
         expect(requestOpened.raw?.source).toBe("pi.rpc.extension-ui");
+        expect(requestOpened.payload.requestType).toBe("command_execution_approval");
       }
       expect(fake.extensionResponses).toContainEqual({
         type: "extension_ui_response",

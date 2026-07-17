@@ -51,6 +51,7 @@ import {
   extractForkMessages,
   extractReasoningTextDelta,
   extractSessionFile,
+  extractStateModelSlug,
   makePiRpcTransport,
   type MakePiRpcTransportOptions,
   piForkSucceeded,
@@ -160,11 +161,12 @@ interface PiSessionContext {
 // ---------------------------------------------------------------------------
 
 export function classifyPiToolItemType(toolName: string): CanonicalItemType {
-  // whole-token match (split camelCase/separators) so "recommend" isn't read as "command"
+  // whole-token match (split camelCase/separators) so "recommend" isn't read as "command".
+  // also strip punctuation so extension titles like "Run bash?" tokenize to "bash".
   const tokens = new Set(
     toolName
       .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/[._/-]/g, " ")
+      .replace(/[._/\-?!,;:()[\]]+/g, " ")
       .toLowerCase()
       .split(/\s+/)
       .filter((token) => token.length > 0),
@@ -1001,9 +1003,17 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       PI_STATE_TIMEOUT_MS,
     );
     const sessionFile = extractSessionFile(stateResponse);
-    if (sessionFile !== undefined) {
-      context.session = { ...context.session, resumeCursor: { sessionFile } };
+    // Prefer the caller's model selection; otherwise adopt Pi's active model from get_state
+    // so turn.started can include it even when the user didn't pick an explicit slug.
+    const stateModel = extractStateModelSlug(stateResponse);
+    if (context.currentModel === undefined && stateModel !== undefined) {
+      context.currentModel = stateModel;
     }
+    context.session = {
+      ...context.session,
+      ...(sessionFile !== undefined ? { resumeCursor: { sessionFile } } : {}),
+      ...(context.currentModel !== undefined ? { model: context.currentModel } : {}),
+    };
 
     // fail closed unless the gate extension registered its sentinel command
     if (verifyApprovalGate) {
@@ -1055,7 +1065,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       threadId,
       payload: {
         config: {
-          ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+          ...(context.currentModel !== undefined ? { model: context.currentModel } : {}),
           ...(input.cwd ? { cwd: input.cwd } : {}),
         },
       },

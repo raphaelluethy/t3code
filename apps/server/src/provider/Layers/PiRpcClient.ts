@@ -223,6 +223,18 @@ export function extractSessionFile(response: RpcResponse | undefined): string | 
     : undefined;
 }
 
+/** `provider/id` slug from a successful `get_state` response, when Pi reports a model. */
+export function extractStateModelSlug(response: RpcResponse | undefined): string | undefined {
+  const model = piResponseData(response)?.["model"];
+  if (!model || typeof model !== "object") return undefined;
+  const record = model as Record<string, unknown>;
+  if (typeof record["provider"] !== "string" || typeof record["id"] !== "string") return undefined;
+  const provider = record["provider"].trim();
+  const id = record["id"].trim();
+  if (provider.length === 0 || id.length === 0) return undefined;
+  return piModelSlug({ provider, id });
+}
+
 export function extractAvailableModels(
   response: RpcResponse | undefined,
 ): ReadonlyArray<ModelInfo> {

@@ -43,6 +43,12 @@ describe("classifyPiApprovalRequestType", () => {
     expect(classifyPiApprovalRequestType("write_file")).toBe("file_change_approval");
   });
 
+  it("classifies bundled-gate confirm titles like Run bash?", () => {
+    expect(classifyPiApprovalRequestType("Run bash?")).toBe("command_execution_approval");
+    expect(classifyPiApprovalRequestType("Run write?")).toBe("file_change_approval");
+    expect(classifyPiApprovalRequestType("Run edit?")).toBe("file_change_approval");
+  });
+
   it("maps non-command/non-file tools to dynamic_tool_call (a surfaced approval)", () => {
     expect(classifyPiApprovalRequestType("web_search")).toBe("dynamic_tool_call");
     expect(classifyPiApprovalRequestType("mcp__server__tool")).toBe("dynamic_tool_call");

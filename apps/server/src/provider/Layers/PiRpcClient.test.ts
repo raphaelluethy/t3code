@@ -11,6 +11,7 @@ import {
   extractLastAssistantText,
   extractReasoningTextDelta,
   extractSessionFile,
+  extractStateModelSlug,
   parsePiStdoutLine,
   PI_THINKING_LEVEL_VALUES,
   piForkSucceeded,
@@ -211,6 +212,32 @@ describe("extractSessionFile", () => {
     expect(
       extractSessionFile(
         asResponse({ type: "response", success: true, data: { sessionFile: "" } }),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("extractStateModelSlug", () => {
+  it("builds a provider/id slug from get_state model data", () => {
+    expect(
+      extractStateModelSlug(
+        asResponse({
+          type: "response",
+          success: true,
+          data: { model: { provider: "openai", id: "gpt-4o" } },
+        }),
+      ),
+    ).toBe("openai/gpt-4o");
+  });
+
+  it("returns undefined when model is missing, null, or malformed", () => {
+    expect(extractStateModelSlug(undefined)).toBeUndefined();
+    expect(
+      extractStateModelSlug(asResponse({ type: "response", success: true, data: { model: null } })),
+    ).toBeUndefined();
+    expect(
+      extractStateModelSlug(
+        asResponse({ type: "response", success: true, data: { model: { provider: "openai" } } }),
       ),
     ).toBeUndefined();
   });

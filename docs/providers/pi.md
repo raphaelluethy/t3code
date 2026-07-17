@@ -90,17 +90,8 @@ active, T3 Code refuses to start the session rather than run Pi with unguarded t
 If you turn **Require tool approval** off, Pi runs tools without asking. Only do this in
 environments where that is acceptable.
 
-### Advanced: what happens if the gate is unavailable
-
-There is an advanced policy, `onApprovalUnavailable`, that controls what T3 Code does when
-tool approval is required but the approval gate cannot be loaded. It defaults to `fail`:
-
-- `fail` — refuse to start the session (default, safest).
-- `readOnly` — start Pi with mutating tools (`bash`, `write`, `edit`, `multi_edit`,
-  `apply_patch`) disabled, so it can still read and plan.
-
-Neither mode ever runs mutating tools without a gate. This field is not shown in the normal
-Settings form; leave it at `fail` unless you have a specific reason to change it.
+If tool approval is required but the bundled approval gate cannot be loaded, T3 Code
+refuses to start the session rather than run Pi with unguarded tools.
 
 ## Limitations
 

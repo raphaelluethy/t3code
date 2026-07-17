@@ -4,6 +4,8 @@ This guide is for people who want to use the Pi coding agent in T3 Code.
 
 Pi support is **Early Access** and is disabled by default. You opt in from Settings, and
 Pi runs through its own `~/.pi/agent` configuration — the same setup the `pi` CLI uses.
+T3 talks to Pi over its native `pi --mode rpc` protocol (not ACP), so installed Pi
+extensions, skills, and packages remain available in sessions.
 
 ## Before You Start
 
@@ -33,6 +35,7 @@ In Settings, your Pi provider looks like this:
 ```text
 Display name: Pi
 Binary path: pi
+Pi config directory: (empty → ~/.pi/agent)
 Require tool approval: on
 ```
 
@@ -41,27 +44,38 @@ absolute path if you run a specific build.
 
 ## Where Pi Keeps Its Config
 
-Pi reads auth, models, and settings from a single directory:
+Pi reads auth, models, settings, extensions, and packages from a single directory:
 
 ```text
 ~/.pi/agent/auth.json       upstream provider API keys
 ~/.pi/agent/models.json     enabled models
 ~/.pi/agent/settings.json   default provider/model, packages, theme
+~/.pi/agent/extensions/     TypeScript extensions / plugins
+~/.pi/agent/skills/         skills invocable as /skill:name
 ```
 
-T3 Code uses this directory as-is, so the models and providers you see in T3 Code match
-what the `pi` CLI shows.
+T3 Code uses this directory as-is, so the models, providers, and plugin commands you see
+in T3 Code match what the `pi` CLI shows.
 
-To point Pi at a different config directory, set `PI_CODING_AGENT_DIR` in the Pi provider's
-Environment variables section in Settings. This is the Pi equivalent of a separate home,
-and is useful if you want work and personal Pi setups.
+To point Pi at a different config directory, set **Pi config directory** in the provider
+settings (this sets `PI_CODING_AGENT_DIR`). You can also set that env var under Environment
+variables. This is useful if you want work and personal Pi setups.
+
+## Plugins And Slash Commands
+
+Normal chat sessions load your Pi extensions and packages from the config directory.
+T3 discovers available commands with Pi's `get_commands` RPC and surfaces them in the
+composer as provider slash commands (extension commands, prompt templates, and skills).
+
+Isolated text-generation helpers (titles, commit messages, etc.) intentionally run with
+`--no-extensions` so plugins cannot affect structured output.
 
 ## Which Models Are Available?
 
 T3 Code discovers Pi models live. When it checks Pi's status, it briefly starts
-`pi --mode rpc` and asks Pi for its available models, then appends any custom models you
-configured. The result is exactly the model catalog your `~/.pi/agent` configuration
-exposes.
+`pi --mode rpc` and asks Pi for its available models and commands, then appends any
+custom models you configured. The result is exactly the catalog your `~/.pi/agent`
+configuration exposes — including plugin-provided providers when those are installed.
 
 If discovery fails or times out, T3 Code falls back to your custom models only. Enable more
 models with the Pi CLI (`pi config`) or by editing `~/.pi/agent/models.json`, then refresh
@@ -71,7 +85,8 @@ provider status in Settings.
 
 Pi has no built-in per-tool approval prompt, so T3 Code adds one with a small bundled Pi
 extension. When **Require tool approval** is on (the default), T3 Code gates every tool
-call that is not read-only.
+call that is not read-only. Your other installed Pi extensions still load alongside this
+gate.
 
 Read-only tools run without asking:
 
@@ -104,4 +119,5 @@ refuses to start the session rather than run Pi with unguarded tools.
   An invalid key surfaces as an error when you send a message. Use `pi --list-models` to
   confirm your keys work.
 - **Config is shared with the Pi CLI.** Changes you make in `~/.pi/agent` affect both T3
-  Code and the `pi` CLI. Use `PI_CODING_AGENT_DIR` to isolate a setup.
+  Code and the `pi` CLI. Use **Pi config directory** / `PI_CODING_AGENT_DIR` to isolate a
+  setup.

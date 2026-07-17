@@ -519,4 +519,31 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       expect(fake.commands.some((command) => command.type === "steer")).toBe(true);
     }),
   );
+
+  it.effect("completes a turn on agent_settled without double-completing after agent_end", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-settled");
+      const { fiber, store } = yield* collectEvents(
+        adapter,
+        threadId,
+        (event) => event.type === "turn.completed",
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "hello", attachments: [] });
+      yield* fake.pushEvent({ type: "turn_start" } as AgentSessionEvent);
+      yield* fake.pushEvent({ type: "agent_end", willRetry: false } as AgentSessionEvent);
+      yield* fake.pushEvent({ type: "agent_settled" } as AgentSessionEvent);
+      yield* Fiber.join(fiber);
+      const completions = (yield* Ref.get(store)).filter(
+        (event) => event.type === "turn.completed",
+      );
+      expect(completions.length).toBe(1);
+    }),
+  );
 });

@@ -11,8 +11,10 @@ import {
   extractLastAssistantText,
   extractReasoningTextDelta,
   extractSessionFile,
+  extractSlashCommands,
   extractStateModelSlug,
   parsePiStdoutLine,
+  PI_APPROVAL_SENTINEL_COMMAND,
   PI_THINKING_LEVEL_VALUES,
   piForkSucceeded,
   piImageContentFromBytes,
@@ -167,6 +169,57 @@ describe("piModelCapabilities", () => {
 
   it("exposes no option descriptors for non-reasoning models", () => {
     expect(piModelCapabilities(false).optionDescriptors ?? []).toEqual([]);
+  });
+
+  it("hides xhigh/max unless the model is known to support them", () => {
+    const plain = piModelCapabilities(
+      asModelInfo({ provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true }),
+    );
+    const plainIds = (plain.optionDescriptors ?? []).flatMap((descriptor) =>
+      descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+    );
+    expect(plainIds).not.toContain("xhigh");
+    expect(plainIds).not.toContain("max");
+
+    const extended = piModelCapabilities(
+      asModelInfo({ provider: "openai", id: "gpt-5.6", reasoning: true }),
+    );
+    const extendedIds = (extended.optionDescriptors ?? []).flatMap((descriptor) =>
+      descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+    );
+    expect(extendedIds).toContain("xhigh");
+    expect(extendedIds).toContain("max");
+  });
+});
+
+describe("extractSlashCommands", () => {
+  it("maps plugin/extension/skill commands and strips the approval sentinel", () => {
+    expect(
+      extractSlashCommands(
+        asResponse({
+          type: "response",
+          success: true,
+          data: {
+            commands: [
+              { name: "session-name", description: "Rename", source: "extension" },
+              { name: PI_APPROVAL_SENTINEL_COMMAND, source: "extension" },
+              { name: "/fix-tests", description: "Fix tests", source: "prompt" },
+              { name: "skill:demo", description: "Demo", source: "skill" },
+              { name: "session-name", description: "duplicate", source: "extension" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { name: "session-name", description: "Rename" },
+      { name: "fix-tests", description: "Fix tests" },
+      { name: "skill:demo", description: "Demo" },
+    ]);
+  });
+
+  it("returns an empty array for missing or malformed responses", () => {
+    expect(extractSlashCommands(undefined)).toEqual([]);
+    expect(extractSlashCommands(asResponse({ type: "response", success: false }))).toEqual([]);
   });
 });
 

@@ -21,7 +21,7 @@ function gateDecision(opts: {
   return undefined;
 }
 
-// keep in sync with PI_APPROVAL_SENTINEL_COMMAND in PiAdapter.ts
+// keep in sync with PI_APPROVAL_SENTINEL_COMMAND in PiRpcClient.ts
 const SENTINEL_COMMAND = "t3-approval-gate";
 
 const DENIED_REASON = "Denied in T3 Code";

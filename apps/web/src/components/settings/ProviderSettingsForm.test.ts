@@ -26,7 +26,10 @@ describe("ProviderSettingsForm helpers", () => {
 
     expect(pi).toBeDefined();
     expect(pi!.label).toBe("Pi");
-    expect(deriveProviderSettingsFields(pi!).map((field) => field.key)).toEqual(["binaryPath"]);
+    expect(deriveProviderSettingsFields(pi!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "codingAgentDir",
+    ]);
   });
 
   it("sources labels and descriptions from schema annotations", () => {

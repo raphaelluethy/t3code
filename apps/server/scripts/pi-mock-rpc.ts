@@ -41,7 +41,8 @@ rl.on("line", (line: string) => {
       lastAssistantText = replyText;
       write({ type: "message_end" });
       write({ type: "turn_end" });
-      write({ type: "agent_end" });
+      write({ type: "agent_end", willRetry: false });
+      write({ type: "agent_settled" });
       return;
     }
     case "get_last_assistant_text": {

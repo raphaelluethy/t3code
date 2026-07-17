@@ -2,6 +2,7 @@ import {
   type ModelCapabilities,
   type PiSettings,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -21,8 +22,10 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
 } from "../providerSnapshot.ts";
+import { resolvePiProcessEnv } from "./PiEnvironment.ts";
 import {
   extractAvailableModels,
+  extractSlashCommands,
   makePiRpcTransport,
   piModelInfoToServerModel,
 } from "./PiRpcClient.ts";
@@ -32,7 +35,8 @@ const PROVIDER = ProviderDriverKind.make("pi");
 const PI_PRESENTATION = {
   displayName: "Pi",
   badgeLabel: "Early Access",
-  showInteractionModeToggle: true,
+  // Pi has no T3 interaction-mode mapping (plan/default); hide the unused toggle.
+  showInteractionModeToggle: false,
 } as const;
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -58,29 +62,54 @@ const runPiVersion = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
     });
   });
 
-/** Discover models via a short-lived `pi --mode rpc` session; `[]` on any failure. */
-export const discoverPiModelsViaRpc = Effect.fn("discoverPiModelsViaRpc")(
+export interface PiCatalogDiscovery {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+}
+
+/** Discover models + plugin/extension slash commands via a short-lived `pi --mode rpc` session. */
+export const discoverPiCatalogViaRpc = Effect.fn("discoverPiCatalogViaRpc")(
   function* (piSettings: PiSettings, cwd: string, environment: NodeJS.ProcessEnv) {
     const transport = yield* makePiRpcTransport({
       binaryPath: piSettings.binaryPath || "pi",
+      // Keep extensions enabled so installed plugins/packages contribute commands.
       args: ["--mode", "rpc", "--no-session"],
       cwd,
-      env: environment,
+      env: resolvePiProcessEnv(piSettings, environment),
       onExit: Effect.void,
     });
-    const response = yield* transport.request(
+    const modelsResponse = yield* transport.request(
       { type: "get_available_models" },
       "pi-model-discovery",
       PI_MODEL_DISCOVERY_TIMEOUT_MS,
     );
-    return extractAvailableModels(response).map(piModelInfoToServerModel);
+    const commandsResponse = yield* transport.request(
+      { type: "get_commands" },
+      "pi-command-discovery",
+      PI_MODEL_DISCOVERY_TIMEOUT_MS,
+    );
+    return {
+      models: extractAvailableModels(modelsResponse).map(piModelInfoToServerModel),
+      slashCommands: extractSlashCommands(commandsResponse),
+    } satisfies PiCatalogDiscovery;
   },
   Effect.scoped,
   Effect.timeoutOption(PI_MODEL_DISCOVERY_TIMEOUT_MS),
-  Effect.map(Option.getOrElse(() => [] as ReadonlyArray<ServerProviderModel>)),
+  Effect.map(
+    Option.getOrElse(
+      () =>
+        ({
+          models: [],
+          slashCommands: [],
+        }) satisfies PiCatalogDiscovery,
+    ),
+  ),
   Effect.catchCause((cause) =>
-    Effect.logWarning("Pi model discovery failed", { cause }).pipe(
-      Effect.as([] as ReadonlyArray<ServerProviderModel>),
+    Effect.logWarning("Pi catalog discovery failed", { cause }).pipe(
+      Effect.as({
+        models: [],
+        slashCommands: [],
+      } satisfies PiCatalogDiscovery),
     ),
   ),
 );
@@ -135,6 +164,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 ) {
   const checkedAt = yield* nowIso;
   const fallbackModels = modelsFromSettings(piSettings, []);
+  const processEnv = resolvePiProcessEnv(piSettings, environment);
 
   if (!piSettings.enabled) {
     return buildServerProvider({
@@ -152,7 +182,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
-  const versionProbe = yield* runPiVersion(piSettings, environment).pipe(
+  const versionProbe = yield* runPiVersion(piSettings, processEnv).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -212,17 +242,19 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
-  const discovered = yield* discoverPiModelsViaRpc(piSettings, cwd, environment);
-  const models = modelsFromSettings(piSettings, discovered);
+  // Pass the raw caller env; discoverPiCatalogViaRpc applies codingAgentDir itself.
+  const catalog = yield* discoverPiCatalogViaRpc(piSettings, cwd, environment);
+  const models = modelsFromSettings(piSettings, catalog.models);
 
   // no auth query in pi; get_available_models only lists once a key is configured in ~/.pi/agent
-  const authenticated = discovered.length > 0;
+  const authenticated = catalog.models.length > 0;
 
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: piSettings.enabled,
     checkedAt,
     models,
+    slashCommands: catalog.slashCommands,
     probe: {
       installed: true,
       version: parsedVersion,

@@ -7,8 +7,12 @@ import type {
   RpcExtensionUIResponse,
   RpcResponse,
 } from "@earendil-works/pi-coding-agent";
-import type { ModelSelection, ServerProviderModel } from "@t3tools/contracts";
-import type { ModelCapabilities } from "@t3tools/contracts";
+import type {
+  ModelCapabilities,
+  ModelSelection,
+  ServerProviderModel,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +23,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildSelectOptionDescriptor } from "../providerSnapshot.ts";
 import { createModelCapabilities, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+
+/** Internal T3 approval-gate sentinel — never surface as a user slash command. */
+export const PI_APPROVAL_SENTINEL_COMMAND = "t3-approval-gate";
 
 export type PiStdoutMessage =
   | { readonly _tag: "response"; readonly id: string | undefined; readonly response: RpcResponse }
@@ -131,7 +138,10 @@ const PI_THINKING_LEVELS = [
   { value: "medium", label: "Medium", isDefault: true },
   { value: "high", label: "High" },
   { value: "xhigh", label: "Extra High" },
+  { value: "max", label: "Max" },
 ] as const;
+
+const PI_EXTENDED_THINKING_LEVELS = new Set(["xhigh", "max"]);
 
 export type PiThinkingLevel = Extract<RpcCommand, { type: "set_thinking_level" }>["level"];
 
@@ -177,12 +187,21 @@ export function planPiModelSwitch(
   return { kind: "switch", provider: parts.provider, modelId: parts.id, slug: requestedModel };
 }
 
+function supportsExtendedPiThinkingLevels(
+  model: boolean | Pick<ModelInfo, "provider" | "id" | "reasoning">,
+): boolean {
+  if (typeof model === "boolean") return model;
+  if (model.provider !== "openai") return false;
+  const id = model.id.toLowerCase();
+  // Pi exposes xhigh/max only for models that support them (e.g. codex-max, GPT-5.6).
+  return id === "codex-max" || id.includes("gpt-5.6") || id.includes("gpt-5.5");
+}
+
 export function piModelCapabilities(
   model: boolean | Pick<ModelInfo, "provider" | "id" | "reasoning">,
 ): ModelCapabilities {
   const reasoning = typeof model === "boolean" ? model : Boolean(model.reasoning);
-  const supportsExtraHigh =
-    typeof model === "boolean" || (model.provider === "openai" && model.id === "codex-max");
+  const supportsExtended = supportsExtendedPiThinkingLevels(model);
   return createModelCapabilities({
     optionDescriptors: reasoning
       ? [
@@ -190,7 +209,7 @@ export function piModelCapabilities(
             id: "thinking",
             label: "Thinking",
             options: PI_THINKING_LEVELS.filter(
-              (level) => level.value !== "xhigh" || supportsExtraHigh,
+              (level) => !PI_EXTENDED_THINKING_LEVELS.has(level.value) || supportsExtended,
             ).map((level) => ({ ...level })),
           }),
         ]
@@ -261,6 +280,37 @@ export function piResponseHasCommand(
       entry !== null &&
       (entry as Record<string, unknown>)["name"] === commandName,
   );
+}
+
+/**
+ * Map Pi `get_commands` into T3 slash-command catalog entries.
+ * Includes extension commands, prompt templates, and skills from the user's
+ * Pi config/plugins (invoked via `/name` in a prompt).
+ */
+export function extractSlashCommands(
+  response: RpcResponse | undefined,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commands = piResponseData(response)?.["commands"];
+  if (!Array.isArray(commands)) return [];
+
+  const byName = new Map<string, ServerProviderSlashCommand>();
+  for (const entry of commands) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const rawName = typeof record["name"] === "string" ? record["name"].trim() : "";
+    if (rawName.length === 0 || rawName === PI_APPROVAL_SENTINEL_COMMAND) continue;
+    const name = rawName.startsWith("/") ? rawName.slice(1) : rawName;
+    if (name.length === 0 || byName.has(name.toLowerCase())) continue;
+    const description =
+      typeof record["description"] === "string" && record["description"].trim().length > 0
+        ? record["description"].trim()
+        : undefined;
+    byName.set(name.toLowerCase(), {
+      name,
+      ...(description ? { description } : {}),
+    });
+  }
+  return [...byName.values()];
 }
 
 export function extractLastAssistantText(response: RpcResponse | undefined): string | null {

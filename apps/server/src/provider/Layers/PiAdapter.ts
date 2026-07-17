@@ -54,6 +54,7 @@ import {
   extractStateModelSlug,
   makePiRpcTransport,
   type MakePiRpcTransportOptions,
+  PI_APPROVAL_SENTINEL_COMMAND,
   piForkSucceeded,
   piImageContentFromBytes,
   type PiImageContent,
@@ -68,6 +69,7 @@ import {
   type RpcExtensionUIRequest,
   type RpcExtensionUIResponse,
 } from "./PiRpcClient.ts";
+import { resolvePiProcessEnv } from "./PiEnvironment.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 
@@ -77,9 +79,6 @@ const PI_MESSAGES_TIMEOUT_MS = 5_000;
 // fork/new_session rebinds to a new session file — give it more headroom
 const PI_FORK_TIMEOUT_MS = 15_000;
 const PI_MODEL_OPTIONS_TIMEOUT_MS = 5_000;
-
-// keep in sync with SENTINEL_COMMAND in t3-approvals.ts
-const PI_APPROVAL_SENTINEL_COMMAND = "t3-approval-gate";
 
 // like Claude/Cursor: full-access runs ungated; approval-required and
 // auto-accept-edits gate via the bundled extension (Pi has no native per-tool approval)
@@ -307,7 +306,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const baseEnvironment = options?.environment ?? process.env;
+  // Caller may already resolve PI_CODING_AGENT_DIR; re-applying is idempotent.
+  const baseEnvironment = resolvePiProcessEnv(piSettings, options?.environment ?? process.env);
 
   let approvalExtensionPath: string | undefined;
   for (const candidate of APPROVAL_EXTENSION_CANDIDATES) {
@@ -529,9 +529,18 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         }
 
         case "agent_end": {
-          // willRetry means pi will auto-retry (another agent_start/end cycle) —
-          // finalize only on the terminal end, since a retry isn't a user interrupt
+          // willRetry means pi will auto-retry (another agent_start/end cycle).
+          // Prefer agent_settled (Pi >= 0.80.5) for true idle; keep this as a
+          // fallback for older binaries. completeTurn is idempotent either way.
           if (event.willRetry) return;
+          if (context.turnState) {
+            yield* completeTurn(context, "completed");
+          }
+          return;
+        }
+
+        case "agent_settled": {
+          // Session-level idle: no retry, compaction retry, or queued follow-up remains.
           if (context.turnState) {
             yield* completeTurn(context, "completed");
           }
@@ -1110,29 +1119,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       yield* applyThinkingLevel(context, input.modelSelection);
     }
 
-    if (!context.turnState) {
-      const turnId = TurnId.make(yield* nextUuid);
-      const startedAt = yield* nowIso;
-      context.turnState = { turnId, startedAt, items: [] };
-      context.session = {
-        ...context.session,
-        status: "running",
-        activeTurnId: turnId,
-        updatedAt: startedAt,
-      };
-      const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        ...stamp,
-        type: "turn.started",
-        provider: PROVIDER,
-        providerInstanceId: boundInstanceId,
-        threadId: context.session.threadId,
-        turnId,
-        payload: context.currentModel ? { model: context.currentModel } : {},
-      });
-    }
-
-    const turnId = context.turnState.turnId;
+    const turnId = context.turnState?.turnId ?? (yield* openTurn(context));
 
     yield* context.transport
       .writeCommand(buildPiTurnCommand({ isMidTurn, message: promptText, images }))

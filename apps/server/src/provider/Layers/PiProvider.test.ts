@@ -10,26 +10,39 @@ import { buildInitialPiProviderSnapshot, checkPiProviderStatus } from "./PiProvi
 
 const decodePiSettings = Schema.decodeSync(PiSettings);
 
-// fake `pi`: `--version` exits 0; for RPC, wait for a stdin request then reply with models.
-// Responding only after a request avoids racing the transport's pending-request registration.
-const healthyPiScript = (modelsJson: string) =>
+// fake `pi`: `--version` exits 0; for RPC, answer get_available_models + get_commands
+// then exit. Responding only after a request avoids racing pending-request registration.
+const healthyPiScript = (modelsJson: string, commandsJson = "[]") =>
   [
     "#!/bin/sh",
     'if [ "$1" = "--version" ]; then',
-    '  printf "pi 0.80.2\\n"',
+    '  printf "pi 0.80.10\\n"',
     "  exit 0",
     "fi",
+    "answered_models=0",
+    "answered_commands=0",
     "while IFS= read -r line; do",
     '  id=$(printf "%s" "$line" | sed -n \'s/.*"id":"\\([^"]*\\)".*/\\1/p\')',
-    '  [ -z "$id" ] && id="pi-model-discovery"',
-    `  printf '{"type":"response","command":"get_available_models","id":"%s","success":true,"data":{"models":${modelsJson}}}\\n' "$id"`,
-    "  exit 0",
+    '  [ -z "$id" ] && id="pi-discovery"',
+    '  if printf "%s" "$line" | grep -q \'"type":"get_available_models"\'; then',
+    `    printf '{"type":"response","command":"get_available_models","id":"%s","success":true,"data":{"models":${modelsJson}}}\\n' "$id"`,
+    "    answered_models=1",
+    '  elif printf "%s" "$line" | grep -q \'"type":"get_commands"\'; then',
+    `    printf '{"type":"response","command":"get_commands","id":"%s","success":true,"data":{"commands":${commandsJson}}}\\n' "$id"`,
+    "    answered_commands=1",
+    "  fi",
+    '  if [ "$answered_models" = "1" ] && [ "$answered_commands" = "1" ]; then',
+    "    exit 0",
+    "  fi",
     "done",
     "",
   ].join("\n");
 
 const HEALTHY_PI_SCRIPT_NO_MODELS = healthyPiScript("[]");
-const HEALTHY_PI_SCRIPT_WITH_MODELS = healthyPiScript('[{"provider":"openai","id":"gpt-4o"}]');
+const HEALTHY_PI_SCRIPT_WITH_MODELS = healthyPiScript(
+  '[{"provider":"openai","id":"gpt-4o"}]',
+  '[{"name":"session-name","description":"Rename session","source":"extension"},{"name":"t3-approval-gate","source":"extension"},{"name":"skill:demo","description":"Demo skill","source":"skill"}]',
+);
 
 describe("buildInitialPiProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -139,6 +152,11 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
       expect(snapshot.status).toBe("ready");
       expect(snapshot.auth.status).toBe("authenticated");
       expect(snapshot.models.map((model) => model.slug)).toContain("openai/gpt-4o");
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual([
+        "session-name",
+        "skill:demo",
+      ]);
+      expect(snapshot.showInteractionModeToggle).toBe(false);
     }),
   );
 

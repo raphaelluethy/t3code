@@ -8,6 +8,7 @@ import { type ModelSelection, type PiSettings, TextGenerationError } from "@t3to
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
+import { resolvePiProcessEnv } from "../provider/Layers/PiEnvironment.ts";
 import {
   extractLastAssistantText,
   makePiRpcTransport,
@@ -39,11 +40,22 @@ type TextGenOperation =
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+function isPiTextGenerationSettled(message: {
+  readonly _tag: string;
+  readonly event?: { readonly type: string; readonly willRetry?: boolean };
+}): boolean {
+  if (message._tag !== "event" || message.event === undefined) return false;
+  // Prefer agent_settled (0.80.5+); fall back to terminal agent_end for older Pi.
+  if (message.event.type === "agent_settled") return true;
+  return message.event.type === "agent_end" && message.event.willRetry !== true;
+}
+
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const processEnv = resolvePiProcessEnv(piSettings, environment);
 
   const runPiPrompt = (input: {
     readonly message: string;
@@ -59,6 +71,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           "rpc",
           "--no-session",
           "--no-tools",
+          // Isolated prompts should not load user plugins / approval gates.
           "--no-extensions",
           ...(resolvePiThinkingLevel(input.modelSelection)
             ? ["--thinking", resolvePiThinkingLevel(input.modelSelection)!]
@@ -66,17 +79,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           ...(input.modelSelection.model ? ["--model", input.modelSelection.model] : []),
         ],
         cwd: input.cwd,
-        env: environment,
+        env: processEnv,
         onExit: Effect.void,
       });
       yield* transport.writeCommand({ type: "prompt", message: input.message });
       yield* Stream.fromQueue(transport.messages).pipe(
-        Stream.takeUntil(
-          (message) =>
-            message._tag === "event" &&
-            message.event.type === "agent_end" &&
-            message.event.willRetry !== true,
-        ),
+        Stream.takeUntil(isPiTextGenerationSettled),
         Stream.runDrain,
       );
       const response = yield* transport.request(

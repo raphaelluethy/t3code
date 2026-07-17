@@ -368,13 +368,25 @@ export const PiSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
       }),
     ),
+    codingAgentDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Pi config directory",
+        description:
+          "Custom PI_CODING_AGENT_DIR. Auth, models, settings, extensions, and packages live here (default ~/.pi/agent).",
+        providerSettingsForm: {
+          placeholder: "~/.pi/agent",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "codingAgentDir"],
   },
 );
 export type PiSettings = typeof PiSettings.Type;
@@ -529,6 +541,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 const PiSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
+  codingAgentDir: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 

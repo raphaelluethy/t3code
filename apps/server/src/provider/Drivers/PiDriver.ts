@@ -13,8 +13,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
+import { resolvePiProcessEnv } from "../Layers/PiEnvironment.ts";
 import { buildInitialPiProviderSnapshot, checkPiProviderStatus } from "../Layers/PiProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -52,7 +52,6 @@ export type PiDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -86,7 +85,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const effectiveConfig = { ...config, enabled } satisfies PiSettings;
+      const processEnv = resolvePiProcessEnv(
+        effectiveConfig,
+        mergeProviderInstanceEnvironment(environment),
+      );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -97,7 +100,6 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies PiSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,

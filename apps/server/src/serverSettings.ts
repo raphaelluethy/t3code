@@ -21,6 +21,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
+  defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -115,12 +116,39 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
   };
 };
 
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+const PI_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(PI_DRIVER_KIND);
+
+/**
+ * Clients built before the Pi driver existed drop the unknown `providers.pi`
+ * key while decoding settings and then treat the default Pi instance as
+ * disabled, so Pi never appears in their pickers. Every client honours an
+ * explicit `providerInstances` entry regardless of driver, so the default Pi
+ * instance is materialized there from the legacy blob once it is enabled.
+ * Explicit entries win in the registry, so an existing one is left untouched,
+ * and a never-enabled Pi keeps settings.json free of the extra entry.
+ */
+const materializePiProviderInstance = (settings: ServerSettings): ServerSettings => {
+  if (!settings.providers.pi.enabled || PI_DEFAULT_INSTANCE_ID in settings.providerInstances) {
+    return settings;
+  }
+  const { enabled, ...config } = settings.providers.pi;
+  return {
+    ...settings,
+    providerInstances: {
+      ...settings.providerInstances,
+      [PI_DEFAULT_INSTANCE_ID]: { driver: PI_DRIVER_KIND, enabled, config },
+    },
+  };
+};
+
 const normalizeServerSettings = (
   settings: ServerSettings,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
+    Effect.map(materializePiProviderInstance),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
       (cause) =>
@@ -633,8 +661,8 @@ const make = Effect.gen(function* () {
             ),
           );
 
-    const loaded = foldProviderInstanceEnabledFlags(
-      restoreUsedProviders(settings, persisted, providerHistory),
+    const loaded = materializePiProviderInstance(
+      foldProviderInstanceEnabledFlags(restoreUsedProviders(settings, persisted, providerHistory)),
     );
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)

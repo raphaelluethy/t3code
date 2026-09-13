@@ -1030,6 +1030,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   size?: "sm" | "xs";
   hidden?: boolean;
   onToggleInteractionMode: () => void;
@@ -1037,7 +1038,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 }) {
   const size = props.size ?? "sm";
   const [open, setOpen] = useComposerMenuState(props.hidden);
-  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
+  const availableModes = props.supportedRuntimeModes?.length
+    ? props.supportedRuntimeModes
+    : runtimeModeOptions;
+  const displayedMode = availableModes.includes(props.runtimeMode)
+    ? props.runtimeMode
+    : (availableModes[0] ?? props.runtimeMode);
+  const runtimeModeOption = runtimeModeConfig[displayedMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
@@ -1096,7 +1103,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         <Select
           open={open}
           onOpenChange={setOpen}
-          value={props.runtimeMode}
+          value={displayedMode}
           onValueChange={(value) => props.onRuntimeModeChange(value!)}
         >
           <TooltipTrigger
@@ -1112,7 +1119,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <SelectValue>{runtimeModeOption.label}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
-            {runtimeModeOptions.map((mode) => {
+            {availableModes.map((mode) => {
               const option = runtimeModeConfig[mode];
               const OptionIcon = option.icon;
               return (
@@ -4848,6 +4855,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           showInteractionModeToggle={planModeUiEnabled}
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
+          supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
           size={composerControlsInStrip ? "xs" : "sm"}
           hidden={composerControlsHidden || restingHiddenBlockCount > 0}
           onToggleInteractionMode={toggleInteractionMode}
@@ -4935,6 +4943,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         <CompactComposerControlsMenu
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
+          supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
           showInteractionModeToggle={planModeUiEnabled}
           traitsMenuContent={providerTraitsMenuContent}
           onToggleInteractionMode={toggleInteractionMode}
@@ -4975,6 +4984,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <CompactComposerControlsMenu
                 interactionMode={interactionMode}
                 runtimeMode={runtimeMode}
+                supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
                 size="xs"
                 hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
                 showInteractionModeToggle={

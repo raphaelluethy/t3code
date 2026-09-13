@@ -889,6 +889,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("materializes the default Pi instance so older clients can see it", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // A legacy-only enable is invisible to clients whose settings schema
+      // predates Pi; the explicit instance is what they can decode.
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providers":{"pi":{"enabled":true,"launchArgs":"--verbose"}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      const piId = ProviderInstanceId.make("pi");
+      assert.deepEqual(settings.providerInstances[piId], {
+        driver: ProviderDriverKind.make("pi"),
+        enabled: true,
+        config: { binaryPath: "pi", launchArgs: "--verbose", customModels: [] },
+      });
+      // An explicit entry is the user's, so it is never overwritten.
+      const updated = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [piId]: { driver: ProviderDriverKind.make("pi"), enabled: false, config: {} },
+        },
+      });
+      assert.strictEqual(updated.providerInstances[piId]?.enabled, false);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("folds in-config enabled flags arriving through updates", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
